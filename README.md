@@ -27,6 +27,7 @@ Add `?unlockAll` to the URL to unlock every level.
 | Restart level | R                                      |
 | Level select  | Esc                                    |
 | Mute          | M                                      |
+| Show controls | H                                      |
 
 ## Bongs and powers
 
@@ -37,6 +38,7 @@ Add `?unlockAll` to the URL to unlock every level.
 | 3     | Sticky Resin  | Wall slide and wall jump (also refills air jump and dash)    |
 | 4     | Cloud Nine    | Glide: hold jump while falling                               |
 | 5     | -             | Finale: everything at once                                   |
+| 6–9   | -             | Bonus levels: spiked ceilings, a vertical climb, a long glide down, and a final gauntlet |
 
 Each level starts with the powers from the levels before it. Progress and best times are saved in
 the browser's localStorage.
@@ -66,7 +68,9 @@ src/
 | Char | Meaning            |
 |------|--------------------|
 | `#`  | Solid              |
-| `^`  | Spikes             |
+| `^`  | Spikes (pointing up)    |
+| `v`  | Ceiling spikes          |
+| `<` `>` | Wall spikes (pointing left / right) |
 | `P`  | Player spawn       |
 | `C`  | Checkpoint         |
 | `G`  | Goal flag          |
@@ -78,11 +82,13 @@ src/
 Reachability reference (horizontal reach in pixels, same height; tiles are 32px):
 jump ≈ 197 (max height ≈ 91, so 2-tile steps), double jump ≈ 332 (height ≈ 180), jump + dash ≈ 316,
 double jump + dash ≈ 450, double jump + glide ≈ 650. In a 2-tile-tall tunnel, only dash gets you
-much past 4 tiles.
+much past 4 tiles. Under a spiked ceiling 3 tiles above the floor, any full jump is fatal. Bumping a
+ledge corner within 12px of its top in midair pops you onto it (`PHYSICS.cornerCorrection`).
 
 ## Adding things
 
-- **A new level:** add `src/levels/levelN.ts` and list it in `src/levels/index.ts`.
+- **A new level:** add `src/levels/levelN.ts` and list it in `src/levels/index.ts`. Maps can be any
+  width or height; levels smaller than the screen are centered.
 - **A new bong power:** add it to `PowerId` / `POWERS` / `POWER_ORDER` in `src/powers.ts`, give it a
   map character in `LEVEL_LEGEND`, then implement the behavior in `Player.ts`.
 - **Tweak game feel:** everything lives in `PHYSICS` in `src/constants.ts`.
@@ -97,6 +103,8 @@ playtest.load(2)               // level index (0-based), optionally a powers lis
 playtest.tp(15, 14)            // stand in tile (col, row)
 playtest.climb(1, 4)           // wall-jump up a chimney, exit over row 4
 playtest.gap(37, playtest.moves.doubleDash)  // run + jump over the gap starting at col 37
+playtest.dashOff(17)           // run off the edge at col 17 and dash across without jumping
+playtest.glideDown([[13, 16], [21, 3]])      // glide down, aiming for col 16 until row 13, then col 3
 ```
 
 Note that playtest runs record finishes in your save like normal play.

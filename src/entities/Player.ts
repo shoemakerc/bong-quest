@@ -89,6 +89,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       this.refillAirMoves();
     }
 
+    if (!onGround) this.correctCorner(this.isDashing ? this.dashDir : dir);
+
     // Wall contact: touching a wall in the air allows a wall jump; holding toward it also slides.
     const hasWallJump = this.powers.has('wallJump');
     const wallSide = this.body.blocked.left ? -1 : this.body.blocked.right ? 1 : 0;
@@ -143,6 +145,24 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (gliding) this.body.setVelocityY(PHYSICS.glideFallSpeed);
     this.setScale(gliding ? 1.25 : 1, gliding ? 0.85 : 1);
     if (onWall) this.setFlipX(this.wallDir > 0);
+  }
+
+  /** If we just clipped a ledge's corner while moving toward it, lift onto the ledge. */
+  private correctCorner(dir: number) {
+    const b = this.body;
+    const side = b.blocked.right ? 1 : b.blocked.left ? -1 : 0;
+    if (side === 0 || side !== dir) return;
+    for (let lift = 1; lift <= PHYSICS.cornerCorrection; lift++) {
+      const x = b.x + side * 2;
+      const hits = this.scene.physics.overlapRect(x, b.y - lift, b.width, b.height, false, true);
+      if (hits.length === 0) {
+        this.y -= lift;
+        b.y -= lift;
+        b.setVelocityX(side * (this.isDashing ? PHYSICS.dashSpeed : PHYSICS.runSpeed));
+        b.blocked.left = b.blocked.right = false;
+        return;
+      }
+    }
   }
 
   private refillAirMoves() {

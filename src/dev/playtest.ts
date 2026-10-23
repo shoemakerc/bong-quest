@@ -153,6 +153,54 @@ export function installPlaytest(game: Phaser.Game) {
       step(20);
       return { ...where(d0), hops };
     },
+    /** Run toward the gap at `edgeCol` and dash across without jumping (for spiked ceilings). */
+    dashOff(edgeCol: number, dir: 1 | -1 = 1): Result {
+      const d0 = deaths();
+      key(dir > 0 ? 'right' : 'left', true);
+      let dashedAt = -1;
+      for (let f = 0; f < 900; f++) {
+        step();
+        const b = player().body;
+        const atEdge = dir > 0 ? b.right >= edgeCol * TILE + 8 : b.left <= (edgeCol + 1) * TILE - 8;
+        if (dashedAt < 0 && atEdge) {
+          key('dash', true);
+          dashedAt = f;
+        }
+        if (dashedAt >= 0 && f > dashedAt + 15 && b.blocked.down) break;
+        if (deaths() > d0) break;
+      }
+      releaseAll();
+      step(2);
+      return where(d0);
+    },
+    /**
+     * Glide down a shaft, steering toward a target column per band of rows.
+     * `bands` is [untilRow, targetCol][]: while the player's feet are above `untilRow`, aim for `targetCol`.
+     */
+    glideDown(bands: [number, number][]): Result {
+      const d0 = deaths();
+      key('jump', true);
+      let held: KeyName | null = null;
+      for (let f = 0; f < 3000; f++) {
+        step();
+        const b = player().body;
+        if (deaths() > d0) break;
+        const row = b.bottom / TILE;
+        const band = bands.find(([untilRow]) => row < untilRow);
+        const target = band ? band[1] * TILE + TILE / 2 : player().x;
+        const want: KeyName | null =
+          Math.abs(target - player().x) < 8 ? null : target > player().x ? 'right' : 'left';
+        if (want !== held) {
+          if (held) key(held, false);
+          if (want) key(want, true);
+          held = want;
+        }
+        if (f > 30 && b.blocked.down && !band) break;
+      }
+      releaseAll();
+      step(2);
+      return where(d0);
+    },
     /** Walk in a direction for some frames. */
     walk(dir: 1 | -1, frames: number) {
       key(dir > 0 ? 'right' : 'left', true);

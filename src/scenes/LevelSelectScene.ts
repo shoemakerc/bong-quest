@@ -11,8 +11,11 @@ interface LevelSelectData {
   focus?: number;
 }
 
-const ROW_H = 72;
-const TOP = 110;
+const ROW_H = 68;
+const TOP = 96;
+/** Rows scroll between the fixed header and footer bands. */
+const HEADER_H = 86;
+const FOOTER_H = 48;
 
 export class LevelSelectScene extends Phaser.Scene {
   private selected = 0;
@@ -31,13 +34,15 @@ export class LevelSelectScene extends Phaser.Scene {
 
   create() {
     const cx = GAME_WIDTH / 2;
-    this.add.text(cx, 50, 'Choose a level', textStyle(32)).setOrigin(0.5);
+    this.add.rectangle(0, 0, GAME_WIDTH, HEADER_H, COLORS.background).setOrigin(0).setScrollFactor(0).setDepth(5);
+    this.add.rectangle(0, GAME_HEIGHT - FOOTER_H, GAME_WIDTH, FOOTER_H, COLORS.background).setOrigin(0).setScrollFactor(0).setDepth(5);
+    this.add.text(cx, 46, 'Choose a level', textStyle(32)).setOrigin(0.5).setScrollFactor(0).setDepth(6);
 
     LEVELS.forEach((level, i) => {
       const y = TOP + i * ROW_H;
       const unlocked = save.isUnlocked(LEVEL_IDS, i);
       const best = save.best(level.id);
-      const bg = this.add.rectangle(cx, y + 24, 760, ROW_H - 10, 0x2d3748).setStrokeStyle(2, 0x2d3748);
+      const bg = this.add.rectangle(cx, y + 24, 760, ROW_H - 8, 0x2d3748).setStrokeStyle(2, 0x2d3748);
       this.rows.push({ bg, unlocked });
 
       // The bong this level hands out, as an icon.
@@ -60,6 +65,8 @@ export class LevelSelectScene extends Phaser.Scene {
     this.add
       .text(cx, GAME_HEIGHT - 24, `↑↓ choose   Enter play   Esc title   ${muteLabel()}`, textStyle(14, COLORS.textDim))
       .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(6)
       .setName('help');
     bindGlobalKeys(this, () =>
       (this.children.getByName('help') as Phaser.GameObjects.Text).setText(
@@ -81,7 +88,7 @@ export class LevelSelectScene extends Phaser.Scene {
     kb.on('keydown-SPACE', () => this.play());
     kb.on('keydown-ESC', () => this.scene.start('Title'));
 
-    this.highlight();
+    this.highlight(true);
   }
 
   private play() {
@@ -94,10 +101,24 @@ export class LevelSelectScene extends Phaser.Scene {
     this.scene.start('Game', { levelIndex: this.selected });
   }
 
-  private highlight() {
+  private highlight(instant = false) {
     this.rows.forEach(({ bg }, i) => {
       const on = i === this.selected;
       bg.setFillStyle(on ? 0x3c4a5e : 0x232a36).setStrokeStyle(2, on ? COLORS.player : 0x2d3748);
     });
+
+    // Scroll so the selected row sits inside the visible band.
+    const cam = this.cameras.main;
+    const rowTop = TOP + this.selected * ROW_H - 6;
+    const rowBottom = rowTop + ROW_H;
+    const visibleTop = cam.scrollY + HEADER_H;
+    const visibleBottom = cam.scrollY + GAME_HEIGHT - FOOTER_H;
+    let target = cam.scrollY;
+    if (rowTop < visibleTop) target = rowTop - HEADER_H;
+    else if (rowBottom > visibleBottom) target = rowBottom - (GAME_HEIGHT - FOOTER_H);
+    target = Math.max(0, target);
+    this.tweens.killTweensOf(cam);
+    if (instant) cam.setScroll(0, target);
+    else this.tweens.add({ targets: cam, scrollY: target, duration: 150, ease: 'Quad.out' });
   }
 }

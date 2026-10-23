@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH, TEXTURES, TILE } from '../constants';
 import { Player, type PlayerEvent } from '../entities/Player';
 import { LEVELS, LEVEL_IDS } from '../levels';
-import { LEVEL_LEGEND, type LevelData } from '../levels/types';
+import { LEVEL_LEGEND, type LevelData, type SpikeDir } from '../levels/types';
 import { POWERS, POWER_ORDER, type PowerId } from '../powers';
 import { formatTime, save } from '../systems/save';
 import { sfx } from '../systems/sfx';
@@ -11,6 +11,14 @@ import { bindGlobalKeys, muteLabel, textStyle } from '../systems/ui';
 export interface GameSceneData {
   levelIndex: number;
 }
+
+/** Per spike direction: [sprite angle, hitbox w, h, offsetX, offsetY]. The texture points up. */
+const SPIKE_SHAPES: Record<SpikeDir, [number, number, number, number, number]> = {
+  up: [0, TILE - 8, 12, 4, TILE - 12],
+  down: [180, TILE - 8, 12, 4, 0],
+  right: [90, 12, TILE - 8, 0, 4],
+  left: [-90, 12, TILE - 8, TILE - 12, 4],
+};
 
 type Groups = Record<'solids' | 'spikes' | 'bongs' | 'goals' | 'checkpoints', Phaser.Physics.Arcade.StaticGroup>;
 
@@ -68,7 +76,10 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, groups.goals, () => this.win());
 
     const worldWidth = this.level.map[0].length * TILE;
-    this.cameras.main.setBounds(0, 0, worldWidth, this.worldHeight);
+    // Levels narrower/shorter than the screen get centered instead of hugging the top-left.
+    const padX = Math.max(0, GAME_WIDTH - worldWidth) / 2;
+    const padY = Math.max(0, GAME_HEIGHT - this.worldHeight) / 2;
+    this.cameras.main.setBounds(-padX, -padY, worldWidth + padX * 2, this.worldHeight + padY * 2);
     this.cameras.main.startFollow(this.player, true, 0.15, 0.15);
     this.physics.world.setBounds(0, 0, worldWidth, this.worldHeight + 200);
 
@@ -77,6 +88,7 @@ export class GameScene extends Phaser.Scene {
 
     const kb = this.input.keyboard!;
     kb.on('keydown-R', () => this.scene.restart({ levelIndex: this.levelIndex }));
+    kb.on('keydown-H', () => this.showControls());
     kb.on('keydown-ESC', () => this.scene.start('LevelSelect', { focus: this.levelIndex }));
     kb.on('keydown-ENTER', () => {
       if (this.won) this.goToNextLevel();
@@ -116,8 +128,10 @@ export class GameScene extends Phaser.Scene {
           }
           case 'spike': {
             const s = groups.spikes.create(cx, cy, TEXTURES.spike) as Phaser.Physics.Arcade.Sprite;
-            // Forgiving hitbox: only the lower part of the tile hurts.
-            s.body!.setSize(TILE - 8, 12).setOffset(4, TILE - 12);
+            // Forgiving hitbox: only the 12px strip along the spike's base hurts.
+            const [angle, w, h, ox, oy] = SPIKE_SHAPES[entry.dir ?? 'up'];
+            s.setAngle(angle);
+            s.body!.setSize(w, h).setOffset(ox, oy);
             break;
           }
           case 'spawn':
@@ -163,6 +177,7 @@ export class GameScene extends Phaser.Scene {
     this.player.setTintFill(def.color);
     this.time.delayedCall(250, () => this.player.clearTint());
     this.toast(`Got the ${def.name} bong!\n${def.hint}`, 3000);
+    this.showControls();
   }
 
   private reachCheckpoint(flag: Phaser.Physics.Arcade.Sprite) {
@@ -241,6 +256,14 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(10);
     this.updateHud();
+    this.showControls();
+  }
+
+  /** The controls bar covers the bottom row of the level, so it only shows for a few seconds. */
+  private showControls(holdMs = 5000) {
+    this.tweens.killTweensOf(this.controlsText);
+    this.controlsText.setAlpha(1);
+    this.tweens.add({ targets: this.controlsText, alpha: 0, delay: holdMs, duration: 600 });
   }
 
   private updateHud() {
@@ -255,7 +278,7 @@ export class GameScene extends Phaser.Scene {
 
     const powerControls = POWER_ORDER.filter((id) => this.player.powers.has(id)).map((id) => POWERS[id].controls);
     this.controlsText.setText(
-      [['Move: ←→/AD', 'Jump: ↑/W/Space', ...powerControls].join('  ·  '), `R: restart   Esc: levels   ${muteLabel()}`].join(
+      [['Move: ←→/AD', 'Jump: ↑/W/Space', ...powerControls].join('  ·  '), `R: restart   Esc: levels   H: show controls   ${muteLabel()}`].join(
         '\n',
       ),
     );

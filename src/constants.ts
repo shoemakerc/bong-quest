@@ -17,6 +17,9 @@ export const PHYSICS = {
   dashSpeed: 640,
   dashMs: 190,
 
+  /** Bumping a ledge corner this close to its top in midair pops you up onto it. */
+  cornerCorrection: 12,
+
   wallSlideSpeed: 110,
   wallJumpX: 230,
   wallJumpY: 500,
