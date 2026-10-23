@@ -13,6 +13,19 @@ export const PHYSICS = {
   coyoteMs: 100,
   jumpBufferMs: 120,
   maxFallSpeed: 900,
+
+  dashSpeed: 640,
+  dashMs: 190,
+
+  wallSlideSpeed: 110,
+  wallJumpX: 230,
+  wallJumpY: 500,
+  /** Grace period after leaving a wall during which a wall jump still works. */
+  wallCoyoteMs: 110,
+  /** Horizontal input is ignored this long after a wall jump so you actually leave the wall. */
+  wallJumpLockMs: 160,
+
+  glideFallSpeed: 75,
 };
 
 export const COLORS = {
@@ -22,12 +35,21 @@ export const COLORS = {
   player: 0xf6ad55,
   spike: 0xe53e3e,
   goal: 0xf6e05e,
+  checkpoint: 0x9ae6b4,
+  checkpointOff: 0x4a5568,
+  text: '#e2e8f0',
+  textDim: '#a0aec0',
 };
+
+export const FONT = 'monospace';
 
 export const TEXTURES = {
   tile: 'tile',
+  tileInner: 'tileInner',
   player: 'player',
   spike: 'spike',
   goal: 'goal',
   bong: 'bong',
+  checkpoint: 'checkpoint',
+  pixel: 'pixel',
 } as const;

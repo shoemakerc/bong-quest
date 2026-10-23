@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, TEXTURES, TILE } from '../constants';
+import { initSfx } from '../systems/sfx';
 
 /** Generates placeholder rectangle textures so the game runs with zero art assets. */
 export class BootScene extends Phaser.Scene {
@@ -14,6 +15,9 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(COLORS.tileEdge).fillRect(0, 0, TILE, 4);
     g.generateTexture(TEXTURES.tile, TILE, TILE).clear();
 
+    g.fillStyle(COLORS.tile).fillRect(0, 0, TILE, TILE);
+    g.generateTexture(TEXTURES.tileInner, TILE, TILE).clear();
+
     g.fillStyle(COLORS.player).fillRect(0, 0, 24, 40);
     g.fillStyle(0x000000).fillRect(15, 10, 4, 4); // eye, so you can tell which way he faces
     g.generateTexture(TEXTURES.player, 24, 40).clear();
@@ -26,6 +30,13 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(COLORS.goal).fillRect(7, 2, 18, 12);
     g.generateTexture(TEXTURES.goal, 28, 40).clear();
 
+    // White so it can be tinted on/off.
+    g.fillStyle(0xffffff).fillRect(4, 8, 3, 32).fillTriangle(7, 8, 20, 13, 7, 18);
+    g.generateTexture(TEXTURES.checkpoint, 22, 40).clear();
+
+    g.fillStyle(0xffffff).fillRect(0, 0, 4, 4);
+    g.generateTexture(TEXTURES.pixel, 4, 4).clear();
+
     // Bong silhouette in white so it can be tinted per power: base, tube, stem, bowl.
     g.fillStyle(0xffffff);
     g.fillRect(2, 18, 16, 10);
@@ -34,6 +45,7 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(18, 13, 5, 4);
     g.generateTexture(TEXTURES.bong, 24, 28).destroy();
 
-    this.scene.start('Game');
+    initSfx(this.game);
+    this.scene.start('Title');
   }
 }
