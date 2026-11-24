@@ -70,7 +70,7 @@ src/
   powers.ts                  Power registry: every bong's power is defined here
   entities/Player.ts         Movement, jumping (coyote time, buffering, variable height), all powers
   levels/types.ts            ASCII legend for level maps
-  levels/level1..5.ts        Levels as ASCII maps
+  levels/level1..9.ts        Levels as ASCII maps
   levels/index.ts            Level order
   scenes/BootScene.ts        Generates placeholder textures
   scenes/TitleScene.ts       Title screen
