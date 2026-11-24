@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
-import { COLORS, GAME_HEIGHT, GAME_WIDTH, TEXTURES, TILE } from '../constants';
+import { itemTexture, outfitTexture, type ApparelItem } from '../apparel';
+import { COLORS, GAME_HEIGHT, GAME_WIDTH, PHYSICS, TEXTURES, TILE } from '../constants';
+import { Enemy, type CellAt } from '../entities/enemies';
 import { Player, type PlayerEvent } from '../entities/Player';
 import { LEVELS, LEVEL_IDS } from '../levels';
 import { LEVEL_LEGEND, type LevelData, type SpikeDir } from '../levels/types';
 import { POWERS, POWER_ORDER, type PowerId } from '../powers';
 import { GameInput, isPortraitTouch, isTouch, type Action } from '../systems/input';
-import { formatTime, save } from '../systems/save';
+import { formatTime, save, today } from '../systems/save';
 import { sfx } from '../systems/sfx';
 import { bindGlobalKeys, muteLabel, tapButton, textStyle, toggleMute, type TapButton } from '../systems/ui';
 
@@ -22,7 +24,14 @@ const SPIKE_SHAPES: Record<SpikeDir, [number, number, number, number, number]> =
 };
 
 type Visible = Phaser.GameObjects.Components.Visible & Phaser.GameObjects.Components.AlphaSingle;
-type Groups = Record<'solids' | 'spikes' | 'bongs' | 'goals' | 'checkpoints', Phaser.Physics.Arcade.StaticGroup>;
+type Groups = Record<
+  'solids' | 'spikes' | 'bongs' | 'lighters' | 'goals' | 'checkpoints',
+  Phaser.Physics.Arcade.StaticGroup
+>;
+interface Cell {
+  col: number;
+  row: number;
+}
 
 /**
  * On-screen buttons, in screen coordinates: [action, x, y, w, h, label]. Movement sits under the
@@ -49,6 +58,11 @@ export class GameScene extends Phaser.Scene {
   private deaths = 0;
   private lastDeathAt = -Infinity;
 
+  private enemies: Enemy[] = [];
+  private lighters: Phaser.Physics.Arcade.Sprite[] = [];
+  /** Where the player starts and each checkpoint: the places today's apparel drop can turn up. */
+  private anchors: Cell[] = [];
+
   private controls!: GameInput;
   private paused = false;
   private pauseMenu: Phaser.GameObjects.GameObject[] = [];
@@ -56,6 +70,7 @@ export class GameScene extends Phaser.Scene {
   private pauseButton!: TapButton;
   private touchUiShown: boolean | undefined;
 
+  private lastToast?: Phaser.GameObjects.Text;
   private hudText!: Phaser.GameObjects.Text;
   private controlsText!: Phaser.GameObjects.Text;
   private powerIcons = new Map<PowerId, Phaser.GameObjects.Image>();
@@ -71,6 +86,10 @@ export class GameScene extends Phaser.Scene {
     this.deaths = 0;
     this.elapsedMs = 0;
     this.lastDeathAt = -Infinity;
+    this.enemies = [];
+    this.lighters = [];
+    this.anchors = [];
+    this.lastToast = undefined;
     this.powerIcons.clear();
     this.paused = false;
     this.pauseMenu = [];
@@ -83,6 +102,7 @@ export class GameScene extends Phaser.Scene {
       solids: this.physics.add.staticGroup(),
       spikes: this.physics.add.staticGroup(),
       bongs: this.physics.add.staticGroup(),
+      lighters: this.physics.add.staticGroup(),
       goals: this.physics.add.staticGroup(),
       checkpoints: this.physics.add.staticGroup(),
     };
@@ -91,12 +111,14 @@ export class GameScene extends Phaser.Scene {
     this.controls = new GameInput(this);
     this.player = new Player(this, this.spawn.x, this.spawn.y, this.controls);
     this.level.startingPowers.forEach((p) => this.player.grantPower(p));
+    this.player.setOutfit(outfitTexture(this, save.outfit()));
     const events: PlayerEvent[] = ['jump', 'airJump', 'wallJump', 'dash'];
     events.forEach((e) => this.player.on(e, () => sfx(e)));
 
     this.physics.add.collider(this.player, groups.solids);
     this.physics.add.overlap(this.player, groups.spikes, () => this.die());
     this.physics.add.overlap(this.player, groups.bongs, (_p, b) => this.collectBong(b as Phaser.Physics.Arcade.Sprite));
+    this.physics.add.overlap(this.player, groups.lighters, (_p, l) => this.useLighter(l as Phaser.Physics.Arcade.Sprite));
     this.physics.add.overlap(this.player, groups.checkpoints, (_p, c) =>
       this.reachCheckpoint(c as Phaser.Physics.Arcade.Sprite),
     );
@@ -112,7 +134,13 @@ export class GameScene extends Phaser.Scene {
 
     this.createHud();
     this.createTouchControls();
-    this.toast(`${this.levelIndex + 1}. ${this.level.name}`, 1400);
+
+    const drop = save.dailyDrop(this.level.id);
+    if (drop) this.placeDailyDrop(drop);
+    const intro = [`${this.levelIndex + 1}. ${this.level.name}`];
+    if (this.level.hint) intro.push(this.level.hint);
+    if (drop) intro.push("Today's apparel drop is somewhere in this level!");
+    this.toast(intro.join('\n'), intro.length > 1 ? 3600 : 1400);
 
     const kb = this.input.keyboard!;
     kb.on('keydown-R', () => this.restartLevel());
@@ -131,6 +159,8 @@ export class GameScene extends Phaser.Scene {
     // Turned upright mid-level: the rotate overlay hides the game, so stop the clock.
     if (isPortraitTouch()) return this.pause();
     this.elapsedMs += delta;
+    this.updateLighters();
+    this.updateEnemies();
     this.player.update(time);
     if (this.player.y > this.worldHeight + 64) this.die();
     this.updateHud();
@@ -138,6 +168,13 @@ export class GameScene extends Phaser.Scene {
 
   private buildLevel(level: LevelData, groups: Groups) {
     const width = level.map[0].length;
+    // What enemies see of the map. Off the edge counts as solid, so nothing wanders out of the level.
+    const cellAt: CellAt = (col, row) => {
+      const ch = level.map[row]?.[col];
+      if (ch === undefined) return 'solid';
+      const kind = LEVEL_LEGEND[ch]?.kind;
+      return kind === 'solid' || kind === 'spike' ? kind : 'open';
+    };
     level.map.forEach((row, y) => {
       if (row.length !== width) {
         throw new Error(`${level.name}: row ${y} is ${row.length} wide, expected ${width}`);
@@ -167,6 +204,7 @@ export class GameScene extends Phaser.Scene {
           }
           case 'spawn':
             this.spawn.set(cx, bottom - 20);
+            this.anchors.unshift({ col: x, row: y });
             break;
           case 'goal': {
             const goal = groups.goals.create(cx, bottom - 20, TEXTURES.goal) as Phaser.Physics.Arcade.Sprite;
@@ -177,8 +215,20 @@ export class GameScene extends Phaser.Scene {
           case 'checkpoint': {
             const c = groups.checkpoints.create(cx, bottom - 20, TEXTURES.checkpoint) as Phaser.Physics.Arcade.Sprite;
             c.setTint(COLORS.checkpointOff);
+            // Tall like the goal's pole, so hopping onto its ledge or over the flag still counts.
+            c.body!.setSize(22, 40 + TILE * 3).setOffset(0, -TILE * 3);
+            this.anchors.push({ col: x, row: y });
             break;
           }
+          case 'lighter': {
+            const l = groups.lighters.create(cx, cy, TEXTURES.lighter) as Phaser.Physics.Arcade.Sprite;
+            this.tweens.add({ targets: l, y: cy - 4, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+            this.lighters.push(l);
+            break;
+          }
+          case 'enemy':
+            this.enemies.push(new Enemy(this, entry.enemy!, entry.axis, x, y, cellAt));
+            break;
           case 'bong': {
             const power = entry.power!;
             const b = groups.bongs.create(cx, cy, TEXTURES.bong) as Phaser.Physics.Arcade.Sprite;
@@ -212,6 +262,88 @@ export class GameScene extends Phaser.Scene {
     this.showControls();
   }
 
+  // ---------------------------------------------------------------- lighters and enemies
+
+  /** A lighter relights the double jump and dash in midair. Touching one with both in hand leaves it be. */
+  private useLighter(lighter: Phaser.Physics.Arcade.Sprite) {
+    if (!lighter.body!.enable || !this.player.needsRefill) return;
+    this.player.refill();
+    lighter.body!.enable = false;
+    lighter.setAlpha(0.2).setData('readyAt', this.elapsedMs + PHYSICS.lighterRespawnMs);
+    this.burst(lighter.x, lighter.y, COLORS.flame, 10);
+    sfx('lighter');
+    this.player.setTintFill(COLORS.flame);
+    this.time.delayedCall(120, () => this.player.clearTint());
+  }
+
+  /** Spent lighters come back on the level clock, so they wait out a pause too. */
+  private updateLighters() {
+    for (const l of this.lighters) {
+      if (l.body!.enable || this.elapsedMs < (l.getData('readyAt') as number)) continue;
+      this.relight(l);
+    }
+  }
+
+  private relight(lighter: Phaser.Physics.Arcade.Sprite) {
+    lighter.body!.enable = true;
+    lighter.setAlpha(1);
+  }
+
+  /** Moves the enemies, then checks each against the player: a landing from above squishes, anything else hurts. */
+  private updateEnemies() {
+    const b = this.player.body;
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      e.update(this.elapsedMs);
+      const hit = e.hitbox;
+      if (b.right <= hit.left || b.left >= hit.right || b.bottom <= hit.top || b.top >= hit.bottom) continue;
+      const fromAbove = b.velocity.y >= 0 && b.bottom - hit.top <= PHYSICS.stompTolerance;
+      if (e.def.stompable && fromAbove) {
+        e.squish();
+        this.player.stomp();
+        this.burst(e.sprite.x, e.sprite.y, e.def.color, 12);
+        sfx('stomp');
+      } else {
+        this.die();
+        return;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- daily apparel drop
+
+  /** Puts today's item beside the player's start or one of the checkpoints, the same spot all day. */
+  private placeDailyDrop(item: ApparelItem) {
+    const map = this.level.map;
+    const empty = (col: number, row: number) => map[row]?.[col] === '.';
+    const solid = (col: number, row: number) => LEVEL_LEGEND[map[row]?.[col]]?.kind === 'solid';
+    // Stand-on-able, with headroom, and nothing else in the cell.
+    const fits = (col: number, row: number) => empty(col, row) && empty(col, row - 1) && solid(col, row + 1);
+
+    const seed = [...today()].reduce((sum, ch) => sum * 31 + ch.charCodeAt(0), 7) >>> 0;
+    const anchor = this.anchors[seed % this.anchors.length];
+    const col = [3, 4, 2, 5, 1, -1, -2, 6, -3].map((d) => anchor.col + d).find((c) => fits(c, anchor.row)) ?? anchor.col;
+
+    // Low enough that walking through it picks it up.
+    const x = col * TILE + TILE / 2;
+    const y = anchor.row * TILE + 6;
+    const halo = this.add.rectangle(x, y, 34, 34).setStrokeStyle(2, 0xffffff, 0.5);
+    this.tweens.add({ targets: halo, angle: 360, duration: 4000, repeat: -1 });
+    const drop = this.physics.add.staticImage(x, y, itemTexture(this, item));
+    this.tweens.add({ targets: [drop, halo], y: y - 5, duration: 800, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+
+    const pickup = this.physics.add.overlap(this.player, drop, () => {
+      pickup.destroy();
+      drop.destroy();
+      halo.destroy();
+      save.collectDaily();
+      this.player.setOutfit(outfitTexture(this, save.outfit()));
+      item.colors.forEach((color) => this.burst(x, y, color, 12));
+      sfx('apparel');
+      this.toast(`Today's drop: ${item.name}!\nYou put it on. Another one drops tomorrow.`, 3600);
+    });
+  }
+
   private reachCheckpoint(flag: Phaser.Physics.Arcade.Sprite) {
     if (flag.getData('active')) return;
     flag.setData('active', true).setTint(COLORS.checkpoint);
@@ -229,6 +361,9 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(120, 0.006);
     sfx('death');
     this.player.respawn(this.spawn.x, this.spawn.y);
+    // Squished enemies and spent lighters come back, so every attempt starts the same.
+    this.enemies.forEach((e) => e.revive());
+    this.lighters.forEach((l) => this.relight(l));
   }
 
   private win() {
@@ -459,8 +594,9 @@ export class GameScene extends Phaser.Scene {
     this.showControls();
   }
 
-  /** Centered message; fades after `holdMs`. */
+  /** Centered message; fades after `holdMs`. A new one replaces whatever is still showing. */
   private toast(message: string, holdMs: number) {
+    this.lastToast?.destroy();
     const text = this.add
       .text(GAME_WIDTH / 2, 120, message, {
         ...textStyle(20, '#ffffff'),
@@ -472,6 +608,7 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(20);
     this.tweens.add({ targets: text, alpha: 0, delay: holdMs, duration: 500, onComplete: () => text.destroy() });
+    this.lastToast = text;
   }
 
   private panel(message: string) {

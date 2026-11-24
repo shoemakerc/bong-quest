@@ -2,12 +2,18 @@ import type Phaser from 'phaser';
 import { TILE } from '../constants';
 import type { GameScene } from '../scenes/GameScene';
 import type { PowerId } from '../powers';
+import { LEVELS } from '../levels';
+import { setDayForTesting } from '../systems/save';
+import { SOLUTIONS } from './solutions';
 
 /**
  * Dev-only scripted playtesting. Steps the game manually (works even when the tab is hidden)
  * and fakes key presses, so you can check that a jump/climb/glide is possible from the console:
  *
  *   playtest.load(2); playtest.tp(14, 14); playtest.climb(1, 9)
+ *
+ * Levels with moving enemies are checked with whole-level input scripts instead; see `seq` and
+ * `solve`, and ./solutions.ts.
  */
 const KEYS = { left: 37, right: 39, jump: 32, dash: 88 } as const;
 type KeyName = keyof typeof KEYS;
@@ -200,6 +206,129 @@ export function installPlaytest(game: Phaser.Game) {
       releaseAll();
       step(2);
       return where(d0);
+    },
+    /** Where the player is and what he's doing, for working out a script. */
+    state() {
+      const p = player();
+      const b = p.body;
+      return {
+        x: Math.round(p.x),
+        feet: Math.round(b.bottom),
+        col: +(p.x / TILE).toFixed(2),
+        row: +(b.bottom / TILE - 1).toFixed(2),
+        vy: Math.round(b.velocity.y),
+        ground: b.blocked.down,
+        deaths: deaths(),
+        ms: Math.round(scene['elapsedMs'] as number),
+        won: scene['won'] as boolean,
+      };
+    },
+    /** Live enemies: kind and position in tiles. */
+    enemies() {
+      return scene['enemies']
+        .filter((e) => e.alive)
+        .map((e) => `${e.kind}@${(e.sprite.x / TILE).toFixed(1)},${(e.sprite.y / TILE).toFixed(1)}`);
+    },
+    /**
+     * Plays a script of inputs, one token per step, and stops at the first death. A token is the keys
+     * to hold (R right, L left, J jump, D dash, N nothing) and then how long to hold them:
+     *
+     *   R30        for 30 frames
+     *   R>12.5     until his center is at or past column 12.5 (also `<`)
+     *   RJ^9       until his feet are above the top of row 9 (also `v`: below it)
+     *   RJ!        until he stops rising (the top of a jump)
+     *   RJ~        until he lands
+     *   N@300/2200 until the level clock, modulo 2200 ms, reaches 300 (to wait out an enemy's cycle)
+     *
+     * Keys not named in a token are released, so a second jump needs a gap: `RJ! R1 RJ12`.
+     * `each` is called after every token, for tracing where a script goes wrong.
+     */
+    seq(script: string, each?: (token: string) => void) {
+      const d0 = deaths();
+      const fail = (why: string, token: string, i: number) => ({ ...api.state(), ok: false, why, token, index: i });
+      const tokens = script.trim().split(/\s+/);
+      const down = new Set<KeyName>();
+      for (let i = 0; i < tokens.length; i++) {
+        const m = /^([RLJDN]+)(\d+|[<>^v]-?[\d.]+|[~!]|@\d+\/\d+)$/.exec(tokens[i]);
+        if (!m) throw new Error(`playtest.seq: bad token "${tokens[i]}"`);
+        const [, keys, how] = m;
+        // Only send a key event when a key changes, as a keyboard would: a stray key-up reads as
+        // letting go of jump, which cuts a jump or a bounce short.
+        for (const [letter, name] of [['R', 'right'], ['L', 'left'], ['J', 'jump'], ['D', 'dash']] as const) {
+          const want = keys.includes(letter);
+          if (want !== down.has(name)) key(name, want);
+          if (want) down.add(name);
+          else down.delete(name);
+        }
+        const n = parseFloat(how.slice(1));
+        const [phase, period] = how.slice(1).split('/').map(Number);
+        const done = (f: number): boolean => {
+          const b = player().body;
+          switch (how[0]) {
+            case '>': return player().x >= n * TILE;
+            case '<': return player().x <= n * TILE;
+            case '^': return b.bottom <= n * TILE;
+            case 'v': return b.bottom >= n * TILE;
+            case '!': return f > 1 && b.velocity.y >= 0;
+            case '~': return f > 1 && b.blocked.down;
+            case '@': return ((scene['elapsedMs'] as number) - phase + period) % period < 17;
+            default: return f >= parseInt(how, 10);
+          }
+        };
+        let f = 0;
+        while (!done(f)) {
+          step();
+          f++;
+          if (deaths() > d0) {
+            releaseAll();
+            return fail('died', tokens[i], i);
+          }
+          if (api.won) break;
+          if (f > 900) {
+            releaseAll();
+            return fail('stuck', tokens[i], i);
+          }
+        }
+        each?.(tokens[i]);
+        if (api.won) break;
+      }
+      releaseAll();
+      step(2);
+      return { ...api.state(), ok: true };
+    },
+    /** Like `seq` from the start of a level, returning a line per token: where he ended up and what's nearby. */
+    trace(levelIndex: number, script: string) {
+      api.load(levelIndex);
+      const lines: string[] = [];
+      const note = (token: string, extra = '') => {
+        const s = api.state();
+        const p = player();
+        const near = scene['enemies']
+          .filter((e) => e.alive && Math.abs(e.sprite.x - p.x) < 260 && Math.abs(e.sprite.y - p.y) < 300)
+          .map((e) => `${e.kind[0]}${Math.round(e.sprite.x - p.x)},${Math.round(e.sprite.y - p.y)}`);
+        lines.push(`${token} -> c${s.col} r${s.row} ${s.ground ? 'G' : 'air'} vy${s.vy} ${s.ms}ms [${near.join(' ')}]${extra}`);
+      };
+      const result = api.seq(script, note);
+      if (!result.ok && 'why' in result) note(result.token, ` !!${result.why}`);
+      if (result.won) lines.push('WON');
+      return lines.join('\n');
+    },
+    /** Plays a level's recorded solution from ./solutions.ts and says whether it reached the flag. */
+    solve(levelIndex: number) {
+      const level = LEVELS[levelIndex];
+      const script = SOLUTIONS[level.id];
+      if (!script) return { level: level.id, ok: false, why: 'no recorded solution' };
+      api.load(levelIndex);
+      const result = api.seq(script.join(' '));
+      return { level: level.id, ...result, ok: result.won && result.deaths === 0 };
+    },
+    /** Runs every recorded solution. */
+    solveAll() {
+      return LEVELS.map((l, i) => (SOLUTIONS[l.id] ? api.solve(i) : undefined)).filter(Boolean);
+    },
+    /** Pretend it's another day (YYYY-MM-DD) for the daily apparel drop; no argument goes back to today. */
+    setDay(day?: string) {
+      setDayForTesting(day);
     },
     /** Walk in a direction for some frames. */
     walk(dir: 1 | -1, frames: number) {

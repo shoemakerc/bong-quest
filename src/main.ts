@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { LEVELS } from './levels';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH, PHYSICS } from './constants';
 import { BootScene } from './scenes/BootScene';
+import { ClosetScene } from './scenes/ClosetScene';
 import { GameScene } from './scenes/GameScene';
 import { LevelSelectScene } from './scenes/LevelSelectScene';
 import { TitleScene } from './scenes/TitleScene';
@@ -24,7 +25,7 @@ const game = new Phaser.Game({
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   // Three touch pointers, so a thumb can hold a direction while the other holds jump and taps dash.
   input: { activePointers: 3 },
-  scene: [BootScene, TitleScene, LevelSelectScene, GameScene],
+  scene: [BootScene, TitleScene, LevelSelectScene, ClosetScene, GameScene],
 });
 
 // Handy for poking at the game from the browser console during development.

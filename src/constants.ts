@@ -29,6 +29,14 @@ export const PHYSICS = {
   wallJumpLockMs: 160,
 
   glideFallSpeed: 75,
+
+  /** Upward speed after landing on an enemy: a small hop, or a big one if jump is held. */
+  stompBounce: 380,
+  stompBounceHeld: 560,
+  /** A falling player whose feet are within this many px of an enemy's top squishes it. */
+  stompTolerance: 18,
+  /** A used lighter comes back after this long. */
+  lighterRespawnMs: 2500,
 };
 
 export const COLORS = {
@@ -40,6 +48,11 @@ export const COLORS = {
   goal: 0xf6e05e,
   checkpoint: 0x9ae6b4,
   checkpointOff: 0x4a5568,
+  lighter: 0xedf2f7,
+  flame: 0xf6ad55,
+  buzzkill: 0x38b2ac,
+  badVibe: 0x9f7aea,
+  ember: 0xe53e3e,
   text: '#e2e8f0',
   textDim: '#a0aec0',
 };
@@ -54,5 +67,9 @@ export const TEXTURES = {
   goal: 'goal',
   bong: 'bong',
   checkpoint: 'checkpoint',
+  lighter: 'lighter',
+  buzzkill: 'buzzkill',
+  badVibe: 'badVibe',
+  ember: 'ember',
   pixel: 'pixel',
 } as const;

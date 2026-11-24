@@ -7,7 +7,7 @@ import { save } from './save';
  */
 export type SfxName =
   | 'jump' | 'airJump' | 'wallJump' | 'dash' | 'pickup' | 'death'
-  | 'checkpoint' | 'win' | 'select' | 'confirm' | 'locked';
+  | 'checkpoint' | 'win' | 'select' | 'confirm' | 'locked' | 'stomp' | 'lighter' | 'apparel';
 
 let ctx: AudioContext | undefined;
 let master: GainNode | undefined;
@@ -97,6 +97,18 @@ const SOUNDS: Record<SfxName, () => void> = {
   select: () => tone({ freq: 880, dur: 0.04, vol: 0.06 }),
   confirm: () => tone({ freq: 660, to: 1320, dur: 0.1, vol: 0.08 }),
   locked: () => tone({ freq: 150, dur: 0.12, vol: 0.1, type: 'sawtooth' }),
+  // A thud, then the boing of the bounce.
+  stomp: () => {
+    tone({ freq: 190, to: 80, dur: 0.09, vol: 0.14 });
+    tone({ freq: 320, to: 640, dur: 0.1, vol: 0.08, type: 'triangle', delay: 0.05 });
+  },
+  // Flint flick, then the flame catching.
+  lighter: () => {
+    noise(0.05, 5000, 3000, 0.15);
+    tone({ freq: 700, to: 1400, dur: 0.12, vol: 0.07, type: 'sine', delay: 0.04 });
+  },
+  apparel: () => [659, 784, 988, 1319, 988, 1319].forEach((f, i) =>
+    tone({ freq: f, dur: i === 5 ? 0.35 : 0.09, vol: 0.08, type: 'triangle', delay: i * 0.08 })),
 };
 
 export function sfx(name: SfxName) {

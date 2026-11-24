@@ -39,7 +39,8 @@ export class LevelSelectScene extends Phaser.Scene {
     const cx = GAME_WIDTH / 2;
     this.add.rectangle(0, 0, GAME_WIDTH, HEADER_H, COLORS.background).setOrigin(0).setScrollFactor(0).setDepth(5);
     this.add.rectangle(0, GAME_HEIGHT - FOOTER_H, GAME_WIDTH, FOOTER_H, COLORS.background).setOrigin(0).setScrollFactor(0).setDepth(5);
-    this.add.text(cx, 46, 'Choose a level', textStyle(32)).setOrigin(0.5).setScrollFactor(0).setDepth(6);
+    this.add.text(cx, 40, 'Choose a level', textStyle(32)).setOrigin(0.5).setScrollFactor(0).setDepth(6);
+    this.add.text(cx, 72, this.dailyLine(), textStyle(12, '#9ae6b4')).setOrigin(0.5).setScrollFactor(0).setDepth(6);
 
     LEVELS.forEach((level, i) => {
       const y = TOP + i * ROW_H;
@@ -66,7 +67,7 @@ export class LevelSelectScene extends Phaser.Scene {
     });
 
     const helpText = () =>
-      isTouch() ? 'Tap a level to play   Drag to scroll' : `↑↓ choose   Enter play   Esc title   ${muteLabel()}`;
+      isTouch() ? 'Tap a level to play   Drag to scroll' : `↑↓ choose   Enter play   C closet   Esc title   ${muteLabel()}`;
     const help = this.add
       .text(cx, GAME_HEIGHT - 24, helpText(), textStyle(14, COLORS.textDim))
       .setOrigin(0.5)
@@ -76,6 +77,7 @@ export class LevelSelectScene extends Phaser.Scene {
 
     // Tap targets for what Esc and M do on a keyboard. They also work with a mouse.
     tapButton(this, 66, 46, 100, 40, '‹ Title', () => this.scene.start('Title'), { depth: 7, size: 16 });
+    tapButton(this, 174, 46, 96, 40, 'Closet', () => this.openCloset(), { depth: 7, size: 16 });
     const sound = tapButton(this, GAME_WIDTH - 86, 46, 140, 40, muteLabel(), () => {
       toggleMute();
       sound.setText(muteLabel());
@@ -101,6 +103,7 @@ export class LevelSelectScene extends Phaser.Scene {
     kb.on('keydown-ENTER', () => this.play());
     kb.on('keydown-SPACE', () => this.play());
     kb.on('keydown-ESC', () => this.scene.start('Title'));
+    kb.on('keydown-C', () => this.openCloset());
 
     this.highlight(true);
   }
@@ -144,6 +147,22 @@ export class LevelSelectScene extends Phaser.Scene {
       this.tweens.killTweensOf(cam);
       cam.setScroll(0, Phaser.Math.Clamp(cam.scrollY + dy, 0, maxScroll()));
     });
+  }
+
+  private openCloset() {
+    sfx('confirm');
+    this.scene.start('Closet', { focus: this.selected });
+  }
+
+  /** Where today's apparel drop stands, for the header. */
+  private dailyLine() {
+    const daily = save.dailyStatus();
+    if (daily.state === 'collected') return "Today's apparel drop: picked up. Another one drops tomorrow.";
+    if (daily.state === 'waiting') {
+      const n = LEVEL_IDS.indexOf(daily.levelId);
+      return `Today's apparel drop is waiting in level ${n + 1}, ${LEVELS[n]?.name ?? '?'}.`;
+    }
+    return "Today's apparel drop will be in the first level you play.";
   }
 
   private play() {

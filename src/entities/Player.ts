@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { OUTFIT_ORIGIN } from '../apparel';
 import { PHYSICS, TEXTURES } from '../constants';
 import { POWERS, type PowerId } from '../powers';
 import type { GameInput } from '../systems/input';
@@ -26,6 +27,11 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private lastWallAt = -Infinity;
   private inputLockedUntil = -Infinity;
 
+  /** Set by the scene when he lands on an enemy; the bounce happens in the next update(). */
+  private stomped = false;
+  /** Apparel layer, drawn over the placeholder block. */
+  private outfit?: Phaser.GameObjects.Image;
+
   constructor(scene: Phaser.Scene, x: number, y: number, controls: GameInput) {
     super(scene, x, y, TEXTURES.player);
     scene.add.existing(this);
@@ -34,6 +40,25 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.body.setMaxVelocityY(PHYSICS.maxFallSpeed);
     this.body.setMaxVelocityX(PHYSICS.runSpeed);
     this.controls = controls;
+
+    // Bodies move their sprites in the physics post-update, so follow up right after that.
+    const syncOutfit = () =>
+      this.outfit?.setPosition(this.x, this.y).setFlipX(this.flipX).setScale(this.scaleX, this.scaleY);
+    scene.events.on(Phaser.Scenes.Events.POST_UPDATE, syncOutfit);
+    this.once(Phaser.GameObjects.Events.DESTROY, () => scene.events.off(Phaser.Scenes.Events.POST_UPDATE, syncOutfit));
+  }
+
+  /** Dress him in an outfit texture (see apparel.ts), or pass undefined for the plain block. */
+  setOutfit(texture: string | undefined) {
+    if (!texture) {
+      this.outfit?.setVisible(false);
+      return;
+    }
+    this.outfit ??= this.scene.add
+      .image(this.x, this.y, texture)
+      .setOrigin(OUTFIT_ORIGIN.x, OUTFIT_ORIGIN.y)
+      .setDepth(this.depth + 1);
+    this.outfit.setTexture(texture).setVisible(true);
   }
 
   get isDashing() {
@@ -42,6 +67,21 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   grantPower(id: PowerId) {
     this.powers.add(id);
+  }
+
+  /** True in midair once the double jump or the dash has been spent: a lighter would help. */
+  get needsRefill() {
+    return (this.powers.has('doubleJump') && this.airJumpsLeft < 1) || (this.powers.has('dash') && !this.canDash);
+  }
+
+  /** Gives back the double jump and the dash, as landing does. */
+  refill() {
+    this.refillAirMoves();
+  }
+
+  /** He just landed on an enemy: bounce off it on the next update. */
+  stomp() {
+    this.stomped = true;
   }
 
   respawn(x: number, y: number) {
@@ -55,6 +95,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.lastGroundedAt = -Infinity;
     this.lastWallAt = -Infinity;
     this.jumpPressedAt = -Infinity;
+    this.stomped = false;
     this.setScale(1);
   }
 
@@ -86,6 +127,19 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       this.refillAirMoves();
     }
 
+    // Bouncing off an enemy: higher with jump held, and it refills air moves like landing does.
+    const bounced = this.stomped;
+    if (bounced) {
+      this.stomped = false;
+      this.dashEndsAt = -Infinity;
+      if (!this.body.allowGravity) this.endDash();
+      this.refillAirMoves();
+      const speed = jumpHeld || jumpPressed ? PHYSICS.stompBounceHeld : PHYSICS.stompBounce;
+      this.body.setVelocityY(-speed);
+      this.lastGroundedAt = -Infinity;
+      this.jumpPressedAt = -Infinity;
+    }
+
     // Dash overrides everything else while it lasts.
     if (dashPressed && this.canDash && !this.isDashing) this.startDash(time, dir);
     if (this.isDashing) {
@@ -102,7 +156,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (!locked && dir !== 0) this.setFlipX(dir < 0);
 
     // Jumping, in priority order: ground (incl. coyote time) → wall → air jump.
-    if (jumpPressed) this.jumpPressedAt = time;
+    // (A jump pressed on the very frame of a stomp went into the bounce instead.)
+    if (jumpPressed && !bounced) this.jumpPressedAt = time;
     const buffered = time - this.jumpPressedAt <= PHYSICS.jumpBufferMs;
     const canCoyote = time - this.lastGroundedAt <= PHYSICS.coyoteMs;
     const canWallJump = hasWallJump && !onGround && time - this.lastWallAt <= PHYSICS.wallCoyoteMs;
@@ -110,6 +165,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (buffered && canCoyote) {
       this.jump('jump');
       this.lastGroundedAt = -Infinity; // consume coyote window
+    } else if (bounced) {
+      // No jump this frame.
     } else if (jumpPressed && canWallJump) {
       this.wallJump(time);
     } else if (jumpPressed && this.airJumpsLeft > 0) {

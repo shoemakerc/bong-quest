@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
+import { addOutfit } from '../apparel';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH, TEXTURES } from '../constants';
 import { POWERS, POWER_ORDER } from '../powers';
 import { isTouch } from '../systems/input';
+import { save } from '../systems/save';
 import { sfx } from '../systems/sfx';
 import { bindGlobalKeys, muteLabel, textStyle, toggleMute } from '../systems/ui';
 
@@ -23,8 +25,10 @@ export class TitleScene extends Phaser.Scene {
       this.tweens.add({ targets: bong, y: 288, duration: 700, delay: i * 150, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     });
 
-    // Our hero, hopping in place.
-    const hero = this.add.image(cx, 380, TEXTURES.player).setScale(1.5);
+    // Our hero, hopping in place in whatever he's wearing.
+    const hero = [this.add.image(cx, 380, TEXTURES.player), addOutfit(this, cx, 380, save.outfit())]
+      .filter((part) => part !== undefined)
+      .map((part) => part.setScale(1.5));
     this.tweens.add({ targets: hero, y: 350, duration: 320, yoyo: true, repeat: -1, ease: 'Quad.out', repeatDelay: 300 });
     this.add.rectangle(cx, 412, 140, 4, COLORS.tileEdge);
 
