@@ -2,16 +2,79 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- No pinch or double-tap zoom: on a phone every touch is a game input. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no" />
     <title>Bong Quest</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#111111" />
+    <!-- Add to Home Screen on iPhone opens as a fullscreen app (Safari has no fullscreen API for pages). -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Bong Quest" />
     <style>
-      html, body { margin: 0; height: 100%; background: #111; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #111;
+        overflow: hidden;
+        overscroll-behavior: none;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
       body { display: flex; align-items: center; justify-content: center; }
+      #game { width: 100%; height: 100%; }
       #game canvas { image-rendering: pixelated; }
+
+      /* Phones held upright: the game is landscape, so ask for a turn. */
+      #rotate {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 28px;
+        background: #1b1f2a;
+        color: #e2e8f0;
+        font: 18px/1.4 monospace;
+        text-align: center;
+        padding: 24px;
+      }
+      #rotate .phone {
+        width: 44px;
+        height: 76px;
+        border: 4px solid #f6ad55;
+        border-radius: 6px;
+        animation: turn 2.4s ease-in-out infinite;
+      }
+      @keyframes turn {
+        0%, 25% { transform: rotate(0deg); }
+        55%, 100% { transform: rotate(-90deg); }
+      }
+      /* html.touch is set by src/systems/input.ts on touch devices. */
+      @media (orientation: portrait) {
+        html.touch #rotate { display: flex; }
+      }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <div id="rotate" aria-live="polite">
+      <div class="phone"></div>
+      <div>Turn your phone sideways<br />to play Bong Quest.</div>
+    </div>
+    <script>
+      // iOS Safari ignores user-scalable=no for pinches; cancel its gesture events instead.
+      document.addEventListener('gesturestart', (e) => e.preventDefault());
+      document.addEventListener('dblclick', (e) => e.preventDefault());
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

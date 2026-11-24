@@ -4,9 +4,10 @@ import { Player, type PlayerEvent } from '../entities/Player';
 import { LEVELS, LEVEL_IDS } from '../levels';
 import { LEVEL_LEGEND, type LevelData, type SpikeDir } from '../levels/types';
 import { POWERS, POWER_ORDER, type PowerId } from '../powers';
+import { GameInput, isPortraitTouch, isTouch, type Action } from '../systems/input';
 import { formatTime, save } from '../systems/save';
 import { sfx } from '../systems/sfx';
-import { bindGlobalKeys, muteLabel, textStyle } from '../systems/ui';
+import { bindGlobalKeys, muteLabel, tapButton, textStyle, toggleMute, type TapButton } from '../systems/ui';
 
 export interface GameSceneData {
   levelIndex: number;
@@ -20,7 +21,21 @@ const SPIKE_SHAPES: Record<SpikeDir, [number, number, number, number, number]> =
   left: [-90, 12, TILE - 8, TILE - 12, 4],
 };
 
+type Visible = Phaser.GameObjects.Components.Visible & Phaser.GameObjects.Components.AlphaSingle;
 type Groups = Record<'solids' | 'spikes' | 'bongs' | 'goals' | 'checkpoints', Phaser.Physics.Arcade.StaticGroup>;
+
+/**
+ * On-screen buttons, in screen coordinates: [action, x, y, w, h, label]. Movement sits under the
+ * left thumb, jump and dash under the right. Hit areas extend to the screen edges (see touchZoneRect).
+ */
+const TOUCH_BUTTONS: [Action, number, number, number, number, string][] = [
+  ['left', 64, 470, 104, 96, ''],
+  ['right', 188, 470, 104, 96, ''],
+  ['dash', 746, 482, 112, 84, 'DASH'],
+  ['jump', 886, 466, 124, 112, 'JUMP'],
+];
+/** Thumbs are imprecise: each hit area grows this much past its button (half the gap between buttons). */
+const TOUCH_PAD = 10;
 
 export class GameScene extends Phaser.Scene {
   private levelIndex = 0;
@@ -33,6 +48,13 @@ export class GameScene extends Phaser.Scene {
   private elapsedMs = 0;
   private deaths = 0;
   private lastDeathAt = -Infinity;
+
+  private controls!: GameInput;
+  private paused = false;
+  private pauseMenu: Phaser.GameObjects.GameObject[] = [];
+  private touchUi: { action: Action; bg: Phaser.GameObjects.Rectangle; parts: Phaser.GameObjects.GameObject[] }[] = [];
+  private pauseButton!: TapButton;
+  private touchUiShown: boolean | undefined;
 
   private hudText!: Phaser.GameObjects.Text;
   private controlsText!: Phaser.GameObjects.Text;
@@ -50,6 +72,10 @@ export class GameScene extends Phaser.Scene {
     this.elapsedMs = 0;
     this.lastDeathAt = -Infinity;
     this.powerIcons.clear();
+    this.paused = false;
+    this.pauseMenu = [];
+    this.touchUi = [];
+    this.touchUiShown = undefined;
   }
 
   create() {
@@ -62,7 +88,8 @@ export class GameScene extends Phaser.Scene {
     };
     this.buildLevel(this.level, groups);
 
-    this.player = new Player(this, this.spawn.x, this.spawn.y);
+    this.controls = new GameInput(this);
+    this.player = new Player(this, this.spawn.x, this.spawn.y, this.controls);
     this.level.startingPowers.forEach((p) => this.player.grantPower(p));
     const events: PlayerEvent[] = ['jump', 'airJump', 'wallJump', 'dash'];
     events.forEach((e) => this.player.on(e, () => sfx(e)));
@@ -84,12 +111,13 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, worldWidth, this.worldHeight + 200);
 
     this.createHud();
+    this.createTouchControls();
     this.toast(`${this.levelIndex + 1}. ${this.level.name}`, 1400);
 
     const kb = this.input.keyboard!;
-    kb.on('keydown-R', () => this.scene.restart({ levelIndex: this.levelIndex }));
+    kb.on('keydown-R', () => this.restartLevel());
     kb.on('keydown-H', () => this.showControls());
-    kb.on('keydown-ESC', () => this.scene.start('LevelSelect', { focus: this.levelIndex }));
+    kb.on('keydown-ESC', () => this.goToLevelSelect());
     kb.on('keydown-ENTER', () => {
       if (this.won) this.goToNextLevel();
     });
@@ -98,7 +126,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number) {
-    if (this.won) return;
+    this.syncTouchUi();
+    if (this.won || this.paused) return;
+    // Turned upright mid-level: the rotate overlay hides the game, so stop the clock.
+    if (isPortraitTouch()) return this.pause();
     this.elapsedMs += delta;
     this.player.update(time);
     if (this.player.y > this.worldHeight + 64) this.die();
@@ -176,7 +207,8 @@ export class GameScene extends Phaser.Scene {
 
     this.player.setTintFill(def.color);
     this.time.delayedCall(250, () => this.player.clearTint());
-    this.toast(`Got the ${def.name} bong!\n${def.hint}`, 3000);
+    const hint = isTouch() ? (def.touchHint ?? def.hint) : def.hint;
+    this.toast(`Got the ${def.name} bong!\n${hint}`, 3000);
     this.showControls();
   }
 
@@ -216,11 +248,38 @@ export class GameScene extends Phaser.Scene {
       '',
       `Time   ${formatTime(this.elapsedMs)}${isBest && prevBest ? '  NEW BEST!' : ''}`,
       `Deaths ${this.deaths}`,
-      '',
-      isLast ? 'Enter: level select' : 'Enter: next level',
-      'R: retry   Esc: level select',
     ];
-    this.panel(lines.join('\n'));
+    if (!isTouch()) {
+      lines.push('', isLast ? 'Enter: level select' : 'Enter: next level', 'R: retry   Esc: level select');
+      this.panel(lines.join('\n'));
+      return;
+    }
+
+    // Touch: the same panel, with tap targets where the key hints would be.
+    const cy = GAME_HEIGHT / 2;
+    this.add.rectangle(GAME_WIDTH / 2, cy, 520, 260, 0x000000, 0.8).setScrollFactor(0).setDepth(30);
+    this.add
+      .text(GAME_WIDTH / 2, cy - 50, lines.join('\n'), { ...textStyle(22, '#ffffff'), align: 'center' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(31);
+    const buttons: [string, () => void][] = [
+      [isLast ? 'Levels' : 'Next', () => this.goToNextLevel()],
+      ['Retry', () => this.restartLevel()],
+      ...(isLast ? [] : ([['Levels', () => this.goToLevelSelect()]] as [string, () => void][])),
+    ];
+    const w = 140;
+    const gap = 16;
+    const x0 = GAME_WIDTH / 2 - ((buttons.length - 1) * (w + gap)) / 2;
+    buttons.forEach(([label, onTap], i) => tapButton(this, x0 + i * (w + gap), cy + 72, w, 52, label, onTap));
+  }
+
+  private restartLevel() {
+    this.scene.restart({ levelIndex: this.levelIndex });
+  }
+
+  private goToLevelSelect() {
+    this.scene.start('LevelSelect', { focus: this.levelIndex });
   }
 
   private goToNextLevel() {
@@ -276,12 +335,128 @@ export class GameScene extends Phaser.Scene {
       else icon.setTint(0x2d3748).setAlpha(0.8);
     }
 
-    const powerControls = POWER_ORDER.filter((id) => this.player.powers.has(id)).map((id) => POWERS[id].controls);
+    const owned = POWER_ORDER.filter((id) => this.player.powers.has(id));
+    if (isTouch()) {
+      // Sits between the two button clusters, so pack the hints into short lines.
+      const items = ['Move: ← →', 'Jump: JUMP (hold = higher)', ...owned.map((id) => POWERS[id].touchControls)];
+      const lines: string[] = [];
+      for (const item of items) {
+        const last = lines.length - 1;
+        if (last >= 0 && lines[last].length + item.length + 5 <= 54) lines[last] += `  ·  ${item}`;
+        else lines.push(item);
+      }
+      lines.push('II: pause, restart, levels, sound');
+      this.controlsText.setText(lines.join('\n')).setAlign('center').setOrigin(0.5, 1).setX(GAME_WIDTH / 2);
+      return;
+    }
+    const powerControls = owned.map((id) => POWERS[id].controls);
     this.controlsText.setText(
       [['Move: ←→/AD', 'Jump: ↑/W/Space', ...powerControls].join('  ·  '), `R: restart   Esc: levels   H: show controls   ${muteLabel()}`].join(
         '\n',
       ),
     );
+    this.controlsText.setAlign('left').setOrigin(0, 1).setX(8);
+  }
+
+  // ---------------------------------------------------------------- touch
+
+  /** Button art is always built; it only shows (and only takes input) on touch devices. */
+  private createTouchControls() {
+    for (const [action, x, y, w, h, label] of TOUCH_BUTTONS) {
+      const bg = this.add
+        .rectangle(x, y, w, h, COLORS.tile, 0.35)
+        .setStrokeStyle(2, COLORS.tileEdge, 0.7)
+        .setScrollFactor(0)
+        .setDepth(50);
+      const parts: Phaser.GameObjects.GameObject[] = [bg];
+      if (label) {
+        parts.push(this.add.text(x, y, label, textStyle(18)).setOrigin(0.5).setAlpha(0.8).setScrollFactor(0).setDepth(51));
+      } else {
+        // Plain triangles rather than ◀ ▶, which some phones draw as emoji.
+        const s = action === 'left' ? -1 : 1;
+        parts.push(
+          this.add
+            .triangle(x, y, s * 14, 0, -s * 10, -16, -s * 10, 16, 0xe2e8f0, 0.8)
+            .setOrigin(0, 0)
+            .setScrollFactor(0)
+            .setDepth(51),
+        );
+      }
+      this.touchUi.push({ action, bg, parts });
+      this.controls.touch.zones.push({ action, rect: touchZoneRect(x, y, w, h) });
+    }
+
+    this.pauseButton = tapButton(this, GAME_WIDTH / 2, 28, 60, 40, 'II', () => this.pause(), { depth: 50, size: 18 });
+    this.pauseButton.bg.setAlpha(0.6);
+  }
+
+  /** Show/hide the on-screen controls and highlight the ones being pressed. */
+  private syncTouchUi() {
+    const show = isTouch() && !this.won && !this.paused;
+    if (show !== this.touchUiShown) {
+      this.touchUiShown = show;
+      this.controls.touch.enabled = show;
+      this.pauseButton.setVisible(show);
+      if (show) this.controls.resetTouch();
+    }
+    if (!show) {
+      for (const { parts } of this.touchUi) for (const p of parts) (p as unknown as Visible).setVisible(false);
+      return;
+    }
+    // Floors sit at the bottom of the screen, so near a level's ends the player can be behind a button.
+    const cam = this.cameras.main;
+    const me = this.player.getBounds();
+    me.x -= cam.scrollX;
+    me.y -= cam.scrollY;
+    for (const { action, bg, parts } of this.touchUi) {
+      // Dash appears once you have the Rip Dash bong.
+      const visible = action !== 'dash' || this.player.powers.has('dash');
+      const behind = Phaser.Geom.Intersects.RectangleToRectangle(me, bg.getBounds());
+      for (const p of parts) (p as unknown as Visible).setVisible(visible).setAlpha(behind ? 0.35 : 1);
+      const held = this.controls.touchHeld.has(action);
+      bg.setFillStyle(held ? COLORS.tileEdge : COLORS.tile, held ? 0.6 : 0.35);
+      bg.setStrokeStyle(2, held ? COLORS.player : COLORS.tileEdge, held ? 1 : 0.7);
+    }
+  }
+
+  private pause() {
+    if (this.paused || this.won) return;
+    this.paused = true;
+    this.physics.pause();
+    sfx('select');
+    this.syncTouchUi();
+
+    const cx = GAME_WIDTH / 2;
+    // Full-screen backdrop that swallows taps meant for the level underneath.
+    const backdrop = this.add
+      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.6)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(60)
+      .setInteractive();
+    const title = this.add.text(cx, 172, 'Paused', textStyle(32, '#ffffff')).setOrigin(0.5).setScrollFactor(0).setDepth(61);
+    const items: [string, () => void][] = [
+      ['Resume', () => this.resume()],
+      ['Restart level', () => this.restartLevel()],
+      ['Level select', () => this.goToLevelSelect()],
+      [muteLabel(), () => {
+        toggleMute();
+        sound.setText(muteLabel());
+      }],
+    ];
+    const buttons = items.map(([label, onTap], i) => tapButton(this, cx, 232 + i * 58, 280, 48, label, onTap, { depth: 62 }));
+    const sound = buttons[buttons.length - 1];
+    this.pauseMenu = [backdrop, title, ...buttons.flatMap((b) => [b.bg, b.label])];
+  }
+
+  private resume() {
+    if (isPortraitTouch()) return; // still upright; the overlay would hide the game
+    this.pauseMenu.forEach((o) => o.destroy());
+    this.pauseMenu = [];
+    this.paused = false;
+    this.physics.resume();
+    this.syncTouchUi();
+    this.showControls();
   }
 
   /** Centered message; fades after `holdMs`. */
@@ -355,4 +530,14 @@ function mergeSolids(map: string[]) {
     open = next;
   });
   return rects;
+}
+
+/** A button's hit area: padded, and stretched to the nearest screen edges so thumbs can't slip off. */
+function touchZoneRect(x: number, y: number, w: number, h: number) {
+  let left = x - w / 2 - TOUCH_PAD;
+  let right = x + w / 2 + TOUCH_PAD;
+  const top = y - h / 2 - TOUCH_PAD;
+  if (left < 40) left = 0;
+  if (right > GAME_WIDTH - 40) right = GAME_WIDTH;
+  return new Phaser.Geom.Rectangle(left, top, right - left, GAME_HEIGHT - top);
 }

@@ -3,9 +3,10 @@ import { COLORS, GAME_HEIGHT, GAME_WIDTH, TEXTURES } from '../constants';
 import { LEVELS, LEVEL_IDS } from '../levels';
 import { LEVEL_LEGEND } from '../levels/types';
 import { POWERS } from '../powers';
+import { isTouch } from '../systems/input';
 import { formatTime, save } from '../systems/save';
 import { sfx } from '../systems/sfx';
-import { bindGlobalKeys, muteLabel, textStyle } from '../systems/ui';
+import { bindGlobalKeys, muteLabel, tapButton, textStyle, toggleMute } from '../systems/ui';
 
 interface LevelSelectData {
   focus?: number;
@@ -16,6 +17,8 @@ const TOP = 96;
 /** Rows scroll between the fixed header and footer bands. */
 const HEADER_H = 86;
 const FOOTER_H = 48;
+/** A touch that moves less than this is a tap; more is a drag-scroll. */
+const TAP_SLOP = 12;
 
 export class LevelSelectScene extends Phaser.Scene {
   private selected = 0;
@@ -62,17 +65,28 @@ export class LevelSelectScene extends Phaser.Scene {
       this.add.text(cx + 365, y + 24, status, textStyle(14, statusColor)).setOrigin(1, 0.5);
     });
 
-    this.add
-      .text(cx, GAME_HEIGHT - 24, `↑↓ choose   Enter play   Esc title   ${muteLabel()}`, textStyle(14, COLORS.textDim))
+    const helpText = () =>
+      isTouch() ? 'Tap a level to play   Drag to scroll' : `↑↓ choose   Enter play   Esc title   ${muteLabel()}`;
+    const help = this.add
+      .text(cx, GAME_HEIGHT - 24, helpText(), textStyle(14, COLORS.textDim))
       .setOrigin(0.5)
       .setScrollFactor(0)
-      .setDepth(6)
-      .setName('help');
-    bindGlobalKeys(this, () =>
-      (this.children.getByName('help') as Phaser.GameObjects.Text).setText(
-        `↑↓ choose   Enter play   Esc title   ${muteLabel()}`,
-      ),
-    );
+      .setDepth(6);
+    bindGlobalKeys(this, () => help.setText(helpText()));
+
+    // Tap targets for what Esc and M do on a keyboard. They also work with a mouse.
+    tapButton(this, 66, 46, 100, 40, '‹ Title', () => this.scene.start('Title'), { depth: 7, size: 16 });
+    const sound = tapButton(this, GAME_WIDTH - 86, 46, 140, 40, muteLabel(), () => {
+      toggleMute();
+      sound.setText(muteLabel());
+      help.setText(helpText());
+    }, { depth: 7, size: 14 });
+    this.input.on('pointerdown', () => {
+      // First touch on a device that didn't look like one: swap the hints over.
+      help.setText(helpText());
+      sound.setText(muteLabel());
+    });
+    this.bindPointer();
 
     const kb = this.input.keyboard!;
     const move = (delta: number) => {
@@ -89,6 +103,47 @@ export class LevelSelectScene extends Phaser.Scene {
     kb.on('keydown-ESC', () => this.scene.start('Title'));
 
     this.highlight(true);
+  }
+
+  /** Drag to scroll the list; a tap on a row selects and plays it. Mouse wheel scrolls too. */
+  private bindPointer() {
+    const cam = this.cameras.main;
+    let downY = 0;
+    let downScroll = 0;
+    let dragging = false;
+    let tracking = false;
+    const maxScroll = () => Math.max(0, TOP + LEVELS.length * ROW_H - 6 - (GAME_HEIGHT - FOOTER_H));
+
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => {
+      // Header/footer buttons handle themselves; the bands above and below the list aren't rows.
+      tracking = over.length === 0 && p.y > HEADER_H && p.y < GAME_HEIGHT - FOOTER_H;
+      if (!tracking) return;
+      downY = p.y;
+      downScroll = cam.scrollY;
+      dragging = false;
+      this.tweens.killTweensOf(cam);
+    });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!tracking || !p.isDown) return;
+      if (Math.abs(p.y - downY) > TAP_SLOP) dragging = true;
+      if (dragging) cam.setScroll(0, Phaser.Math.Clamp(downScroll - (p.y - downY), 0, maxScroll()));
+    });
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (!tracking) return;
+      tracking = false;
+      if (dragging) return;
+      const worldY = p.y + cam.scrollY;
+      const i = Math.floor((worldY - (TOP - 6)) / ROW_H);
+      const row = this.rows[i]?.bg;
+      if (!row || Math.abs(p.x - row.x) > row.width / 2 || Math.abs(worldY - row.y) > row.height / 2) return;
+      this.selected = i;
+      this.highlight();
+      this.play();
+    });
+    this.input.on('wheel', (_p: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) => {
+      this.tweens.killTweensOf(cam);
+      cam.setScroll(0, Phaser.Math.Clamp(cam.scrollY + dy, 0, maxScroll()));
+    });
   }
 
   private play() {

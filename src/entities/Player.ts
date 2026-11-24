@@ -1,13 +1,7 @@
 import Phaser from 'phaser';
 import { PHYSICS, TEXTURES } from '../constants';
 import { POWERS, type PowerId } from '../powers';
-
-interface Controls {
-  left: Phaser.Input.Keyboard.Key[];
-  right: Phaser.Input.Keyboard.Key[];
-  jump: Phaser.Input.Keyboard.Key[];
-  dash: Phaser.Input.Keyboard.Key[];
-}
+import type { GameInput } from '../systems/input';
 
 /** Events the player emits so the scene can react (sound, effects). */
 export type PlayerEvent = 'jump' | 'airJump' | 'wallJump' | 'dash';
@@ -17,7 +11,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   readonly powers = new Set<PowerId>();
 
-  private controls: Controls;
+  private controls: GameInput;
   private lastGroundedAt = -Infinity;
   private jumpPressedAt = -Infinity;
   private airJumpsLeft = 0;
@@ -32,22 +26,14 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private lastWallAt = -Infinity;
   private inputLockedUntil = -Infinity;
 
-  constructor(scene: Phaser.Scene, x: number, y: number) {
+  constructor(scene: Phaser.Scene, x: number, y: number, controls: GameInput) {
     super(scene, x, y, TEXTURES.player);
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
     this.body.setMaxVelocityY(PHYSICS.maxFallSpeed);
     this.body.setMaxVelocityX(PHYSICS.runSpeed);
-
-    const kb = scene.input.keyboard!;
-    const K = Phaser.Input.Keyboard.KeyCodes;
-    this.controls = {
-      left: [kb.addKey(K.LEFT), kb.addKey(K.A)],
-      right: [kb.addKey(K.RIGHT), kb.addKey(K.D)],
-      jump: [kb.addKey(K.UP), kb.addKey(K.W), kb.addKey(K.SPACE)],
-      dash: [kb.addKey(K.SHIFT), kb.addKey(K.X)],
-    };
+    this.controls = controls;
   }
 
   get isDashing() {
@@ -73,16 +59,14 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   update(time: number) {
-    const c = this.controls;
-    const down = (keys: Phaser.Input.Keyboard.Key[]) => keys.some((k) => k.isDown);
-    const pressed = (keys: Phaser.Input.Keyboard.Key[]) => keys.some((k) => Phaser.Input.Keyboard.JustDown(k));
-    const released = (keys: Phaser.Input.Keyboard.Key[]) => keys.some((k) => Phaser.Input.Keyboard.JustUp(k));
-
-    const jumpPressed = pressed(c.jump);
-    const jumpReleased = released(c.jump);
-    const dashPressed = pressed(c.dash);
+    // Keyboard and touch buttons, merged. Sampled once per frame (it consumes press/release edges).
+    const input = this.controls.sample();
+    const jumpPressed = input.jump.pressed;
+    const jumpReleased = input.jump.released;
+    const jumpHeld = input.jump.held;
+    const dashPressed = input.dash.pressed;
     const onGround = this.body.blocked.down;
-    const dir = (down(c.right) ? 1 : 0) - (down(c.left) ? 1 : 0);
+    const dir = (input.right.held ? 1 : 0) - (input.left.held ? 1 : 0);
 
     if (onGround) {
       this.lastGroundedAt = time;
@@ -134,13 +118,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     // Variable jump height: letting go early cuts the rise short.
-    if (jumpReleased && !down(c.jump) && this.body.velocity.y < 0) {
+    if (jumpReleased && !jumpHeld && this.body.velocity.y < 0) {
       this.body.velocity.y *= PHYSICS.jumpCutoff;
     }
 
     // Wall slide and glide both cap fall speed.
     const vy = this.body.velocity.y;
-    const gliding = this.powers.has('glide') && !onGround && !onWall && down(c.jump) && vy > PHYSICS.glideFallSpeed;
+    const gliding = this.powers.has('glide') && !onGround && !onWall && jumpHeld && vy > PHYSICS.glideFallSpeed;
     if (onWall && vy > PHYSICS.wallSlideSpeed) this.body.setVelocityY(PHYSICS.wallSlideSpeed);
     if (gliding) this.body.setVelocityY(PHYSICS.glideFallSpeed);
     this.setScale(gliding ? 1.25 : 1, gliding ? 0.85 : 1);

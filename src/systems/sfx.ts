@@ -19,6 +19,13 @@ export function initSfx(game: Phaser.Game) {
   master = ctx.createGain();
   master.gain.value = 0.5;
   master.connect(ctx.destination);
+
+  // iOS suspends (or "interrupts") the context after a call, Siri, or backgrounding; any tap wakes it.
+  const wake = () => {
+    if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {});
+  };
+  window.addEventListener('pointerdown', wake, { capture: true });
+  window.addEventListener('keydown', wake, { capture: true });
 }
 
 interface Tone {

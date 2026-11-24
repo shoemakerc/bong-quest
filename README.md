@@ -1,6 +1,7 @@
 # Bong Quest
 
-A keyboard-only 2D platformer about a guy who collects bongs, each of which grants a new power.
+A 2D platformer about a guy who collects bongs, each of which grants a new power. Plays with a
+keyboard, or with on-screen touch controls on phones and tablets.
 
 Built with [Phaser 3](https://phaser.io/) + TypeScript + [Vite](https://vite.dev/). All visuals are
 placeholder rectangles and all sounds are synthesized at runtime, so there are no asset files (yet).
@@ -19,15 +20,32 @@ Add `?unlockAll` to the URL to unlock every level.
 
 ## Controls
 
-| Action        | Keys                                   |
-|---------------|----------------------------------------|
-| Move          | ← → or A D                             |
-| Jump          | ↑, W or Space (hold for higher)        |
-| Dash          | Shift or X (after the Rip Dash bong)   |
-| Restart level | R                                      |
-| Level select  | Esc                                    |
-| Mute          | M                                      |
-| Show controls | H                                      |
+| Action        | Keys                                   | Touch                                      |
+|---------------|----------------------------------------|--------------------------------------------|
+| Move          | ← → or A D                             | ◀ ▶ buttons, bottom left (slide between them) |
+| Jump          | ↑, W or Space (hold for higher)        | JUMP, bottom right (hold for higher)       |
+| Glide         | Hold jump while falling                | Hold JUMP while falling                    |
+| Dash          | Shift or X (after the Rip Dash bong)   | DASH, left of JUMP (appears with the bong) |
+| Restart level | R                                      | II (top) → Restart level                   |
+| Level select  | Esc                                    | II → Level select                          |
+| Mute          | M                                      | II → sound, or the ♪ button on menus       |
+| Show controls | H                                      | Shown on level start and after resuming    |
+
+Menus take taps too: tap the title to start, tap a level row to play it (drag to scroll), and tap
+Next / Retry / Levels when you finish a level.
+
+### Phones and tablets
+
+The game is landscape; holding a phone upright shows a "turn your phone" screen and pauses the
+level. Touch mode switches on for coarse-pointer devices or at the first touch, so a touchscreen
+laptop still gets keyboard hints until it's touched.
+
+- **Android / iPad:** the first tap on the title goes fullscreen and locks landscape where the
+  browser allows it.
+- **iPhone:** Safari has no fullscreen API for pages. Use Share → Add to Home Screen; the web app
+  manifest (`public/manifest.webmanifest`) opens it fullscreen in landscape.
+- Sound plays even with the ring/silent switch on (Safari's `navigator.audioSession` set to
+  `playback`).
 
 ## Bongs and powers
 
@@ -57,9 +75,12 @@ src/
   scenes/BootScene.ts        Generates placeholder textures
   scenes/TitleScene.ts       Title screen
   scenes/LevelSelectScene.ts Level select with locks and best times
-  scenes/GameScene.ts        Builds the level, collisions, pickups, checkpoints, HUD
+  scenes/GameScene.ts        Builds the level, collisions, pickups, checkpoints, HUD, touch buttons, pause menu
+  systems/input.ts           Keyboard + touch buttons merged into held/pressed/released per action
   systems/save.ts            Progress and settings in localStorage
   systems/sfx.ts             Synthesized sound effects
+  systems/ui.ts              Text styles, tap buttons, mute toggle
+public/                      Web app manifest and home-screen icons
   dev/playtest.ts            Dev-only scripted playtesting from the browser console
 ```
 
@@ -107,4 +128,8 @@ playtest.dashOff(17)           // run off the edge at col 17 and dash across wit
 playtest.glideDown([[13, 16], [21, 3]])      // glide down, aiming for col 16 until row 13, then col 3
 ```
 
-Note that playtest runs record finishes in your save like normal play.
+Note that playtest runs record finishes in your save like normal play. `playtest` fakes keyboard
+events; the player reads keyboard and touch through the same `GameInput`, so results apply to both.
+
+To try touch controls on a computer, use your browser's device emulation in landscape (for example
+Chrome DevTools' device toolbar with a phone rotated sideways).

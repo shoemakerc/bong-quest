@@ -7,6 +7,10 @@ export interface PowerDef {
   hint: string;
   /** Short control reminder for the HUD. */
   controls: string;
+  /** The same reminder in terms of the on-screen buttons. */
+  touchControls: string;
+  /** Pickup hint for touch, when `hint` mentions keys. */
+  touchHint?: string;
   /** Placeholder tint for the bong and the player's flash. */
   color: number;
 }
@@ -17,6 +21,7 @@ export const POWERS: Record<PowerId, PowerDef> = {
     name: 'Cloud Hopper',
     hint: 'Press jump again in midair to double jump.',
     controls: 'Air jump: jump again',
+    touchControls: 'Air jump: JUMP again',
     color: 0x6be675,
   },
   dash: {
@@ -24,6 +29,8 @@ export const POWERS: Record<PowerId, PowerDef> = {
     name: 'Rip Dash',
     hint: 'Press Shift or X to dash. One dash per jump.',
     controls: 'Dash: Shift/X',
+    touchControls: 'Dash: DASH',
+    touchHint: 'Tap DASH to dash. One dash per jump.',
     color: 0x63b3ed,
   },
   wallJump: {
@@ -31,6 +38,7 @@ export const POWERS: Record<PowerId, PowerDef> = {
     name: 'Sticky Resin',
     hint: 'Hold toward a wall to slide down it, then jump off it.',
     controls: 'Wall jump',
+    touchControls: 'Wall jump: JUMP on a wall',
     color: 0xb794f4,
   },
   glide: {
@@ -38,6 +46,7 @@ export const POWERS: Record<PowerId, PowerDef> = {
     name: 'Cloud Nine',
     hint: 'Hold jump while falling to drift down slowly.',
     controls: 'Glide: hold jump',
+    touchControls: 'Glide: hold JUMP',
     color: 0xf687b3,
   },
 };
