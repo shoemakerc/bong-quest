@@ -1,7 +1,7 @@
 {
   "name": "bong-quest",
   "version": "1.0.0",
-  "description": "A keyboard platformer about collecting bongs that grant powers.",
+  "description": "A platformer about collecting bongs that grant powers. Plays with a keyboard or touch controls.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
